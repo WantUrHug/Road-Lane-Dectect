@@ -51,11 +51,18 @@ def pixel2world(u, v, zw = 0):
 	return result
 
 ############ pixel-->world ##############
+#逆透视变换2
+def pixel2world_v2(u, v):
+
+
+############ world-->pixel ##############
 #透视变换
 def world2pixel(xw, yw, zw, round = True):
 	'''
-	输入的是一个在世界坐标系中的三维坐标，计算后得到在像素上的位置
-	可以通过参数round来判断是否对结果进行取整，不取整的话是为了方便后续的插值
+	最理想的透视变换.
+	输入的是一个在世界坐标系中的三维坐标，计算后得到在像素上的位置.
+	可以通过参数round来判断是否对结果进行取整，不取整的话是为了方便后续的插值.
+	不考虑视场角和分辨率等参数.
 	'''
 
 	#相机高度
@@ -65,7 +72,7 @@ def world2pixel(xw, yw, zw, round = True):
 	#光心位置
 	opticalCenterX = 640
 	opticalCenterY = 360
-	#像素在图片中的尺寸
+	#像素在图片坐标系中的尺寸
 	dX = 0.0072
 	dY = 0.0072
 
@@ -104,15 +111,19 @@ def world2pixel(xw, yw, zw, round = True):
 	else:
 		return res[0][0], res[1][0]
 
+############ world-->pixel ##############
+#透视变换2
 def world2pixel_v2(xw, yw, zw, round = True):
 	'''
-	输入的是一个在世界坐标系中的三维坐标，计算后得到在像素上的位置
-	可以通过参数round来判断是否对结果进行取整，不取整的话是为了方便后续的插值
-	用我自己的手机拍照，matlab标定得到内参矩阵，然后来计算
+	输入的是一个在世界坐标系中的三维坐标，计算后得到在像素上的位置。
+	可以通过参数round来判断是否对结果进行取整，不取整的话是为了方便后续的插值。
+	用自己的手机拍照，matlab标定得到内参矩阵，然后来计算。
+	优点在于避免了相机内在的缺陷，但是缺点在于距离稍远会由于插值导致逆透视变换的效果很差，
+	并且没有完全利用ROI中的点
 	'''
 
 	#相机高度
-	h = 1.7
+	h = 0.357
 	#焦距
 	f = 0.006
 	#光心位置
@@ -134,10 +145,10 @@ def world2pixel_v2(xw, yw, zw, round = True):
 	if s < f:
 		raise ValueError("The point is too close to the camera.")
 	intrinM = np.float32(
-		[	[1.519, 0, 0.52],
-			[0, 1.5142, 0.7229],
-			[0, 0, 0.001],	])*1000
-
+		[	[1.2663, 0, 0.5435, 0],
+			[0, 1.2659, 0.7256, 0],
+			[0, 0, 0.001, 0],	])*1000
+	#print("...")
 	M = np.matmul(intrinM, world2camera)
 	#print(M, M.shape)
 
@@ -153,6 +164,19 @@ def world2pixel_v2(xw, yw, zw, round = True):
 	else:
 		return res[0][0], res[1][0]
 
+############ world-->pixel ##############
+#透视变换3
+def world2pixel_v3(xw, yw, zw = 0):
+	'''
+	想要多模拟一个真实情况中的相机结果，也就是建模，透视变换和逆透视变换，
+	本质上也就是建模。但是似乎，有个与相机镜头息息相关的量被忽略了，孔径角，
+	在一些更加复杂的逆透视变换推导中有涉及，它影响了我们能够塞进相机中的内容，
+	尤其是我们的情景很大可能是朝着地面，所以是指定了一片区域，这也可以
+	帮助我们在建模完成后如何在使用中
+	'''
+
+
+
 
 def plane2img():
 	'''
@@ -160,13 +184,15 @@ def plane2img():
 	目的是为了检查我们写透视变换的函数是否正确，如果这个函数写错了那么逆透视的函数必然是错误的
 	从输出的图像中明显可以看到消失点
 	'''
+
+	#两条白色线所在的位置确定下来
 	x_left = [-2, -1.5]
 	x_right = [1.5, 2]
 
 	height = 72*10
 	width = 128*10
 	#需要切记，用nump.ndarray来表示像素时，(height, width)在我们印象中就是一个矩形，第0维是高，第1维是宽
-	#在赋值的时候不能给错了
+	#在赋值时要注意 u 和 v 代表的含义，不能给错了
 	pic = np.zeros((height, width), dtype = "uint8")
 
 	for xw in np.linspace(-4, 4, 100):
@@ -186,13 +212,14 @@ def plane2img():
 	cv2.waitKey(0)
 	cv2.destroyAllWindows()
 	cv2.imwrite("1.jpg", pic)
-
-def getbirdeye(src, image_h = 640, image_w = 640, ratio = 0.02, interpolation = "BILINEAR"):
+ 
+def getbirdeye(src, image_h = 640, image_w = 480, ratio = 0.005, interpolation = "BILINEAR"):
 	'''
 
 	'''
 
-	im = cv2.imread(src)
+	#im = cv2.imread(src)
+	im = src
 	para = im.shape
 	H = para[0]
 	W = para[1]
@@ -205,11 +232,12 @@ def getbirdeye(src, image_h = 640, image_w = 640, ratio = 0.02, interpolation = 
 		pic = np.zeros((image_h, image_w))
 	else:
 		print("BGR.")
-		pic = np.ones((image_h, image_w, channel))*120
+		pic = np.zeros((image_h, image_w, channel))
 
 	exception_num1 = 0
 	exception_num2 = 0
 	if interpolation == "NEAREST":
+		print("choose nearest interpolation")
 		for vw in range(image_h):
 			for uw in range(image_w):
 				xw = uw - image_w/2
@@ -218,7 +246,7 @@ def getbirdeye(src, image_h = 640, image_w = 640, ratio = 0.02, interpolation = 
 				try:
 					u, v = world2pixel_v2(xw*ratio, yw*ratio, 0, False)
 				except ValueError:
-					pic[vw, uw, :] = 50
+					
 					exception_num1 += 1
 					continue
 				u = int(round(u))
@@ -274,13 +302,14 @@ if __name__ == "__main__":
 	test_img = "D:\\0824\\Project1\\Project1\\test_videos\\pic_001.jpg"
 	test1 = "D:\\GitFile\\roadlane\\1.jpg"
 	test2 = "D:\\0824\\Project1\\Project1\\test_videos\\2.jpg"
+	test3 = "D:\\inverse_inspective\\3.jpg"
 	#pic = cv2.imread(test_img)
 
 	#pixel2world(pic)
 	#x, y = world2pixel(2.3, 7.8 ,0, False)
 	#print(x, y)
 	#print(pixel2world_v2(x, y))
-	plane2img()
-	#
-	#getbirdeye(test1, interpolation = "NEAREST")
+	#plane2img()
+	test3 = cv2.imread(test3)
+	getbirdeye(test3, interpolation = "NEAREST")
 	#getbirdeye(test2, interpolation = "NEAREST")

@@ -1,5 +1,25 @@
 import cv2
 import os
+import numpy as np
+
+def build_test_plane(dst = None):
+
+	a = np.zeros((640, 480), dtype = "uint8")
+
+	width = 40
+	dis = 80
+
+	for i in range(640):
+		for j in range(480):
+			if (j >= dis and j < dis + width) or (j >= 480 - (dis + width) and j < 480 - dis):
+				a[i, j] = 255
+	cv2.imshow("WINDOW", a)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
+
+	cv2.imwrite("abstract.jpg", a)
+
+
 
 def VideoGo(vd_path, filter_fun = None, faster = 1):
 	#逐帧播放视频.
@@ -84,3 +104,5 @@ if __name__ == "__main__":
 	
 	#Video2Img(test_vd, "D:\\0824\\Project1\\Project1\\test_videos\\" + "06")
 	#Img2Video(im_dir, test_vd2)
+	#
+	build_test_plane()

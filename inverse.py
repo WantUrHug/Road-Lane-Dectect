@@ -1,6 +1,7 @@
 import cv2
 import os
 import numpy as np
+import matplotlib.pyplot as plt
 
 ############ pixel-->world ##############
 #逆透视变换
@@ -62,7 +63,8 @@ def pixel2world_v3(u, v):
 	想要多模拟一个真实情况中的相机结果，也就是建模，透视变换和逆透视变换，
 	本质上也就是建模。但是似乎，有个与相机镜头息息相关的量被忽略了，孔径角，
 	在一些更加复杂的逆透视变换推导中有涉及，它影响了我们能够塞进相机中的内容，
-	尤其是我们的情景很大可能是朝着地面，所以是指定了一片区域，假定相机完完全全就是拍着地面
+	尤其是我们的情景很大可能是朝着地面，所以是指定了一片区域，假定相机完完全全就是拍着地面，
+	所以要进一步约束视场角和俯仰角之间的关系.
 	这也可以帮助我们在建模完成后如何在使用中指导较优的选择.
 	与原先版本的差距在于，暂时缺少了最后一步的，变换到真实的像素坐标系中，以左上角为原点
 	而不是以中点为原点.所以在真的画图时，还需要平移.
@@ -70,19 +72,21 @@ def pixel2world_v3(u, v):
 	'''
 
 	#需要的参数
-	#相机的高度、焦距、分辨率、半视场角、光心位置
+	#相机的高度、焦距、分辨率、半视场角
 	f = 0.006#6mm镜头
 	h = 1
-	m = 1280
-	n = 720
-	alpha = 60/180*np.pi
-	beta = 60/180*np.pi
-	centerX = 640
-	centerY = 360
+	m = 640
+	n = 480
+	alpha = 30/180*np.pi
+	beta = 30/180*np.pi
+	#理想情况下光心应该就在图像的中心，光心实际上起的作用不大，在这里是为了实现从
+	centerX = 640/2
+	centerY = 360/2
+	
 	#偏转角和俯仰角，偏向角为0，俯仰角为90表示相机的镜头是朝着车辆的正前方
 	#若偏向角为0、俯仰角为60表示稍微向下
 	pitch = 0/180*np.pi
-	yaw = 50/180*np.pi
+	yaw = 60/180*np.pi
 	
 	#相机平面上的相元尺寸，分别是u和v两个方向，利用相机的参数来进行计算
 	#也就是每个像素真实的长度(?).在最后的计算中会用到但是这里是代码所
@@ -217,12 +221,12 @@ def world2pixel_v3(xw, yw, zw = 0):
 	#相机的高度、焦距、分辨率、半视场角、光心
 	f = 0.006#6mm镜头
 	h = 1
-	m = 1280
-	n = 720
-	alpha = 60/180*np.pi
-	beta = 60/180*np.pi
-	centerX = 640
-	centerY = 360
+	m = 640
+	n = 480
+	alpha = 30/180*np.pi
+	beta = 30/180*np.pi
+	centerX = m/2
+	centerY = n/2
 	#偏转角和俯仰角，偏向角为0，俯仰角为90表示相机的镜头是朝着车辆的正前方
 	#若偏向角为0、俯仰角为60表示稍微向下
 	pitch = 0
@@ -268,138 +272,240 @@ def plane2img(src = None):
 	cv2.waitKey(0)
 	cv2.destroyAllWindows()
 	cv2.imwrite("1.jpg", pic)
-def plane2img_v2(src, H = 640, W = 960, world2pixel = False, interpolation = "NEAREST"):
+def plane2img_v2(src, H = 480, W = 640, world2pixel = False):
 	'''
 	与版本一不同，是将我原本绘制好的平面图片，当成空间中的平面，处理成相片的内容.
 	参数world2pixel决定了，在绘制相片时，是采用透视变换还是逆透视变换，False表示
 	pixel2world，即逆透视变换的觅值方法.
+	但有个问题，平面图片原本就是像素点，似乎不太好?!应该要建立起空间中更加细微的关系，
+	例如空间中x坐标在(0.5, 0.8)这个范围内的点就是白色的.所以要额外设置一个函数，用来当给定一个点时，准确的
+	返回这个点的颜色情况，而不是还要在一张离散的图片中去，这样的插值没有太大意义
 	'''
 	imarr = np.zeros((H, W), dtype = "uint8")
-	origin = cv2.imread(src, 0)
-	print(origin.shape)
-	origin_h, origin_w = origin.shape
-
-	cv2.imshow("A", origin)
-	cv2.waitKey(0)
-	cv2.destroyAllWindows()
-
-	ratio = 0.01
 
 	if not world2pixel:
-		if interpolation == "NEAREST":
-			for v in range(H):
-				for u in range(W):
-					#平移到以图片中心为原点的坐标系中
-					uu = 480 - v
-					vv = u - 320
+		for v in range(H):
+			for u in range(W):
+				#平移到以图片中心为原点的坐标系中
+				uu = H/2 - v
+				vv = u - W/2
+
+				x, y = pixel2world_v3(uu, vv)
+				#print(x, y)
+				imarr[v, u] = _plane_color_v2(x, y)
+
+		cv2.imshow("Pixel", imarr)
+		cv2.waitKey(0)
+		cv2.destroyAllWindows()
+
+
+	getbirdeye_v3(imarr)
+
+def _plane_color(x, y):
+	'''
+	给入一个点的坐标，如果符合车道线的所在位置，就返回255表示白色.
+	如果不是车道线就返回0.此处使用连续的车道线，后期可以尝试间断的
+	车道线或者是转弯的车道线.
+	如果以一条马路中间为原点，用线画一个简图如下:
+
+	|
+	|
+	|||||||||||||||||||||||||||||||||||||||
+	|
+	|
+	|
+	|------------------------------------> y轴正
+	|
+	|
+	|
+	|||||||||||||||||||||||||||||||||||||||
+	|
+	|
+	|
+	V x轴正
 	
-					x, y = pixel2world_v3(uu, vv)
-					#print(x, y)
-					x /= ratio
-					y /= ratio
-					x += origin_w/2
-					#y += origin_h/2
-					if (x < - 1/2 or x >= origin_w - 1/2) or (y < - 1/2 or y >= origin_w - 1/2):
-						#逆透视之后的点不在平面的范围之中，算了算了
-						break
-					x = int(round(x))
-					y = int(round(y))
-					imarr[v, u] = origin[x][y]
-
-			cv2.imshow("B", imarr)
-			cv2.waitKey(0)
-			cv2.destroyAllWindows()
-
-
-
-
-
-
-
-
-
-
-def getbirdeye(src, image_h = 640, image_w = 480, ratio = 0.005, interpolation = "BILINEAR"):
 	'''
-
-	'''
-
-	#im = cv2.imread(src)
-	im = src
-	para = im.shape
-	H = para[0]
-	W = para[1]
-	#print(H, W)
-
-	channel = len(para)
-
-	if channel == 2:
-		print("GRAY")
-		pic = np.zeros((image_h, image_w))
+	#实线宽度，20cm
+	thick = 0.2
+	#车道宽度
+	width = 1
+	absx = abs(x)
+	if (absx > width/2 and absx < width/2 + thick):
+		return 255
 	else:
-		print("BGR.")
-		pic = np.zeros((image_h, image_w, channel))
-
-	exception_num1 = 0
-	exception_num2 = 0
-	if interpolation == "NEAREST":
-		print("choose nearest interpolation")
-		for vw in range(image_h):
-			for uw in range(image_w):
-				xw = uw - image_w/2
-				yw = image_h - vw
-				#print(xw, yw)
-				try:
-					u, v = world2pixel_v2(xw*ratio, yw*ratio, 0, False)
-				except ValueError:
-					
-					exception_num1 += 1
-					continue
-				u = int(round(u))
-				v = int(round(v))
-				#print(u, v)
-				try:
-					pic[vw, uw, :] = im[v, u, :]
-				except IndexError:
-					exception_num2 += 1
-					continue
-	elif interpolation == "BILINEAR":
-		for vw in range(image_h):
-			for uw in range(image_w):
-				xw = uw - image_w/2
-				yw = image_h - vw
-				try:
-					u, v = world2pixel((uw - image_w/2)*ratio, (image_h - vw)*ratio, 0)
-				except ValueError:
-					continue
-				if u >= W or u < 0 or v >= H or v < 0:
-					continue
-				if u%1 != 0:
-					if v%1 != 0:
-						break
-
-	cv2.imshow("BIRDEYE", pic)
-	cv2.waitKey(0)
-	cv2.destroyAllWindows()
-
+		return 0
+def _plane_color_v2(x, y):
 	'''
-	pic = cv2.GaussianBlur(pic, (3,3), 5)
-	cv2.imshow("BIRDEYE", pic)
-	cv2.waitKey(0)
-	cv2.destroyAllWindows()
+	画有一定角度的直线.angle是从x正半轴到y正半轴开始计算.
+	|
+	|    ||
+	|  ||
+	|||
+	|
+	|
+	|------------------------------------->
+	|	 ||
+	|  ||
+	|||
+	|
+	|
+	'''
+	thick = 0.2
+	width = 2
+	angle = 75/180*np.pi#angle != 0.
+
+	cut = abs(x - y/np.tan(angle))
+
+	if (cut < width/2 + thick/np.sin(angle) and cut > width/2):
+		return 255
+	else:
+		return 0
+
+def getbirdeye_v3(src, image_h = 640, image_w = 960):
+	'''
+	利用公式(3)的逆透视变换来执行得到俯瞰图.
+	为了严谨，需要考虑消失点！但是我们这个假设的前提，就是相机对着地面，所以不会有消失点.
+	所以我们可以试着取图片中四条边的中点附近的点作为极限，优先计算这四点映射到平面上的位置，
+	以此来确定俯视图中每个像素对应现实中尺寸的大小.
+	考虑更好的双线性插值.
 	'''
 
-	print("exception_num1 is ", exception_num1)
-	print("exception_num2 is ", exception_num2)
+	if isinstance(src, np.ndarray):
+		im = src
+	else:
+		im = cv2.imread(src)
 
-	return None
-def bilinear_interpolation(x, y, src):
+	height, width = im.shape[:2]
+	#print(height, width)
 
-	if x%1 == 0:
-		if y%1 == 0:
-			return 
-def nearest_interpolation(x, y, src):
-	pass
+
+	uvlimits = np.ones((4,3))
+	uvlimits[:, :2] = np.array([[1,1], [width - 2, height - 2], [width - 2, 1], [1, height - 2]])
+
+	u_uu = np.array(
+		[	[0, 1, 0],
+			[-1, 0, 0],
+			[(height-1)/2, -(width-1)/2, 1]	])
+	uvlimits = np.matmul(uvlimits, u_uu)
+
+	xylimits = np.array([pixel2world_v3(i[0], i[1]) for i in uvlimits])
+	xMax = max(xylimits[:, 0])
+	xMin = min(xylimits[:, 0])
+	yMax = max(xylimits[:, 1])
+	yMin = min(xylimits[:, 1])
+	
+	print(xMax, xMin)
+	print(yMax, yMin)
+
+	#根据计算出来的空间范围来实际的计算每个像素在不同方向上所代表的实际距离
+	step_y = (yMax - yMin)/image_h
+	step_x = (xMax - xMin)/image_w
+	print("step x: %.4f, step y: %.4f"%(step_x, step_y))
+	result = np.zeros((image_h, image_w))
+
+	y = yMin
+	for i in range(image_h):
+		x = xMin
+		for j in range(image_w):
+			u, v = world2pixel_v3(x, y)
+			uu, vv = v + width/2, height/2 - u
+			if (uu < 1 or uu >= width-1) or (vv < 1 or vv >= height - 1):
+				result[i, j] = 0
+				x += step_x
+				continue
+			u1, u2 = int(uu), int(uu + 1)
+			v1, v2 = int(vv), int(vv + 1)
+			delta_u = uu - u1
+			delta_v = vv - v1
+			
+			val = im[v1, u1]*(1-delta_u)*(1-delta_v)+im[v1, u2]*delta_u*(1-delta_v)+im[v2, u2]*delta_u*delta_v+im[v2, u1]*(1-delta_u)*delta_v
+			result[i, j] = val/4
+			x += step_x
+		y += step_y
+	print(x, y)
+
+	cv2.imshow("BIRD", result)
+	cv2.waitKey(1000)
+	#cv2.destroyAllWindows()
+	cv2.imwrite("Bird.jpg", result)
+
+	analyse_birdeye_v2(result, step_x, step_y)
+
+	return result, (step_x, step_y)
+
+def analyse_birdeye(result, step_x, step_y):
+	#需要知道图像中像素，在横纵方向上各代表多少距离
+	#从图像中我们也可以获知，第二由白转黑和第二个由黑转白的点就是车道内侧的位置，
+	#结合距离，看看距离车道线宽度的误差变化
+	#这个函数适用于已知图像中的线和镜头方向平行，即 	_plane_color 这个函数
+	
+	#cv2.imshow("BIRD", result)
+	#cv2.waitKey(0)
+	#cv2.destroyAllWindows()
+
+	image_h, image_w = result.shape
+	#print(result)
+	record = []
+
+	for i in range(image_h - 1):
+		white2black = 0
+		black2white = 0
+		left = 0
+		right = 0
+		for j in range(image_w - 1):
+			if result[i, j] == 0 and result[i, j + 1] != 0:
+				black2white += 1
+			if result[i, j] != 0 and result[i, j + 1] == 0:
+				white2black += 1
+			if  white2black == 1:
+				left = j
+			if black2white == 2:
+				right = j
+				break
+		record.append((right - left)*step_x)
+
+	row = range(len(record))
+	plt.plot(row, record, label = "Predict")
+	plt.plot(row, [2/np.sin(75/180*np.pi) for i in row], label = "Reality")
+	plt.legend()
+	plt.show()
+
+def analyse_birdeye_v2(result, step_x, step_y):
+	#获得的图像可以看成是已经是经过了二值化处理的，但是边界两侧的区域确实有点难处理，只能在画俯视图时
+	#把扇形区域以外的地方也填充成黑色
+	#然后图像中如果顺利，会有两条白色的车道线，但也有可能只有一条，所以最好做一个聚类分析？
+	#太麻烦了，要不就直接做判断，把所有点集合起来做一个线性回归拟合，得到一条直线，如果点离直线都很近(0.2)就
+	#确定是一条，否则就是两条，就把点在这条直线左右分成两组，再各自去求拟合.如果继续递归，那么还可以
+	#区分出更多的等距平行线，关键是平行.如果利用更复杂的聚类算法就可以不受平行这个条件的约束.
+	#目前是只有一或二，所以不用写成递归.
+	
+	image_h, image_w = result.shape
+
+	record = []
+
+	for i in range(100, image_h - 1):
+		#white2black = 0
+		#black2white = 0
+		exchange = 0
+		left = 0
+		right = 0
+		for j in range(image_w - 1):
+			if (result[i, j] == 0 and result[i, j + 1] != 0) or (result[i, j] != 0 and result[i, j + 1] == 0):
+				exchange += 1
+			if result[i, j] == result[i, j + 1]:
+				continue
+			if exchange == 2:
+				left = j
+			if exchange == 3:
+				right = j
+				break
+		record.append((right - left)*step_x)
+
+	row = range(len(record))
+	plt.plot(row, record, label = "Predict")
+	plt.plot(row, [2/np.sin(75/180*np.pi) for i in row], label = "Reality")
+	plt.legend()
+	plt.show()
 
 if __name__ == "__main__":
 
@@ -413,10 +519,10 @@ if __name__ == "__main__":
 	#x, y = world2pixel(2.3, 7.8 ,0, False)
 	#print(x, y)
 	#print(pixel2world_v2(x, y))
-	#plane2img_v2(test1)
+	plane2img_v2(test1)
 	#getbirdeye(test3, interpolation = "NEAREST")
 	#getbirdeye(test2, interpolation = "NEAREST")
-	u, v = world2pixel_v3(-0.2, 0.5)
-	print(u, v)
-	x, y = pixel2world_v3(u, v)
-	print(x, y)
+	#u, v = world2pixel_v3(-0.2, 2)
+	#print(u, v)
+	#x, y = pixel2world_v3(u, v)
+	#print(x, y)

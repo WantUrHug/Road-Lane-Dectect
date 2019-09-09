@@ -51,11 +51,6 @@ def pixel2world(u, v, zw = 0):
 
 	return result
 
-############ pixel-->world ##############
-#逆透视变换2
-def pixel2world_v2(u, v):
-	pass
-
 ############ world-->pixel ##############
 #逆透视变换3
 def pixel2world_v3(u, v):
@@ -95,6 +90,29 @@ def pixel2world_v3(u, v):
 	#lv = 2*f*np.tan(beta)/(n - 1)
 
 	#u, v = 360 - v, u - 640
+
+	Yw = h*np.tan(yaw - np.arctan(2*u/(m - 1)*np.tan(alpha)))
+	Xw = np.sqrt(h**2 + Yw**2)*2*v/(n - 1)*np.tan(beta)/np.sqrt(1 + (2*u/(m - 1)*np.tan(alpha))**2)
+
+	return Xw, Yw
+
+def pixel2world_v3_1(u, v, YAW, h, n, m):
+	'''
+	基本的逻辑同上个函数，只是一些参数要采用现实的手机的结果.
+	'''
+
+	#手动测量的视场角，要除以2，角度其实真的很小
+	alpha = 45/2/180*np.pi
+	beta = 45/2/180*np.pi
+	
+	#偏转角和俯仰角，偏向角为0，俯仰角为90表示相机的镜头是朝着车辆的正前方
+	#若偏向角为0、俯仰角为60表示稍微向下
+	pitch = 0/180*np.pi
+	yaw = YAW/180*np.pi
+	
+	#相机平面上的相元尺寸，分别是u和v两个方向，利用相机的参数来进行计算
+	#也就是每个像素真实的长度(?).在最后的计算中会用到但是这里是代码所
+	#以没有写进去，太冗余
 
 	Yw = h*np.tan(yaw - np.arctan(2*u/(m - 1)*np.tan(alpha)))
 	Xw = np.sqrt(h**2 + Yw**2)*2*v/(n - 1)*np.tan(beta)/np.sqrt(1 + (2*u/(m - 1)*np.tan(alpha))**2)
@@ -215,11 +233,9 @@ def world2pixel_v3(xw, yw, zw = 0):
 	建立透视变换.和之前的版本有不少区别，例如光心居于图像和实物中间，让我们可以不担心太近的点越过边界.
 	引入视场角!
 	'''
-
-
 	#需要的参数
 	#相机的高度、焦距、分辨率、半视场角、光心
-	f = 0.006#6mm镜头
+	#f = 0.006#6mm镜头
 	h = 1
 	m = 640
 	n = 480
@@ -237,6 +253,24 @@ def world2pixel_v3(xw, yw, zw = 0):
 
 	return u, v
 
+def world2pixel_v3_1(xw, yw, YAW, h, m, n):
+	'''
+	和上面的函数
+	'''
+
+	#手动测量的视场角，要除以2，角度其实真的很小
+	alpha = 45/2/180*np.pi
+	beta = 46/2/180*np.pi
+
+	#偏转角和俯仰角，偏向角为0，俯仰角为90表示相机的镜头是朝着车辆的正前方
+	#若偏向角为0、俯仰角为60表示稍微向下
+	pitch = 0
+	yaw = YAW/180*np.pi
+
+	u = (m-1)/2/np.tan(alpha)*np.tan(yaw - np.arctan(yw/h))
+	v = np.sqrt(1 + (2*u/(m - 1) * np.tan(alpha))**2) * xw/np.sqrt(h**2 + yw**2)*(n - 1)/2/np.tan(beta)
+
+	return -u, -v
 
 def plane2img(src = None):
 	'''
@@ -245,33 +279,23 @@ def plane2img(src = None):
 	从输出的图像中明显可以看到消失点
 	'''
 
-	#两条白色线所在的位置确定下来
-	x_left = [-2, -1.5]
-	x_right = [1.5, 2]
+	imarr = np.zeros((H, W), dtype = "uint8")
 
-	height = 72*10
-	width = 128*10
-	#需要切记，用nump.ndarray来表示像素时，(height, width)在我们印象中就是一个矩形，第0维是高，第1维是宽
-	#在赋值时要注意 u 和 v 代表的含义，不能给错了
-	pic = np.zeros((height, width), dtype = "uint8")
+	if not world2pixel:
+		for v in range(H):
+			for u in range(W):
+				#平移到以图片中心为原点的坐标系中
+				uu = H/2 - v
+				vv = u - W/2
 
-	for xw in np.linspace(-4, 4, 100):
-		for yw in np.linspace(0.00, 5, 5000):
-			#print(round(i, 1), round(j, 1))
-			if (xw >= x_left[0] and xw <= x_left[1]) or (xw >= x_right[0] and xw <= x_right[1]):
-				
-				try:
-					u, v = world2pixel_v2(xw, yw, 0, True)
-				except ValueError:
-					continue
-				if (u >=0 and u< width) and (v >= 0 and v < height):
+				x, y = pixel2world_v3(uu, vv)
+				#print(x, y)
+				imarr[v, u] = _plane_color(x, y)
 
-					pic[v, u] = 255
+		cv2.imshow("Pixel", imarr)
+		cv2.waitKey(0)
+		cv2.destroyAllWindows()
 
-	cv2.imshow("w", pic)
-	cv2.waitKey(0)
-	cv2.destroyAllWindows()
-	cv2.imwrite("1.jpg", pic)
 def plane2img_v2(src, H = 480, W = 640, world2pixel = False):
 	'''
 	与版本一不同，是将我原本绘制好的平面图片，当成空间中的平面，处理成相片的内容.
@@ -292,14 +316,34 @@ def plane2img_v2(src, H = 480, W = 640, world2pixel = False):
 
 				x, y = pixel2world_v3(uu, vv)
 				#print(x, y)
-				imarr[v, u] = _plane_color_v2(x, y)
+				imarr[v, u] = _plane_color(x, y)
 
 		cv2.imshow("Pixel", imarr)
 		cv2.waitKey(0)
 		cv2.destroyAllWindows()
 
-
 	getbirdeye_v3(imarr)
+
+def plane2img_v3(H, W):
+	'''
+	测试，想做一个动图来观察一个代表车子的矩形框在车道中旋转(实际上是车道在旋转，
+	只是效果相同).物体和直线比较多所以不再使用黑白图像了，用彩色的RGB，更清楚一点
+	'''
+
+	imarr = np.zeros((H, W, 3), dtype = "uint8")
+
+	for v in range(H):
+		for u in range(W):
+			#平移到以图片中心为原点的坐标系中
+			uu = H/2 - v
+			vv = u - W/2
+			x, y = pixel2world_v3(uu, vv)
+			#print(x, y)
+			imarr[-v, u] = _plane_color_v3(x, y, 80)
+
+	cv2.imshow("Pixel", imarr)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
 
 def _plane_color(x, y):
 	'''
@@ -328,7 +372,7 @@ def _plane_color(x, y):
 	#实线宽度，20cm
 	thick = 0.2
 	#车道宽度
-	width = 1
+	width = 3
 	absx = abs(x)
 	if (absx > width/2 and absx < width/2 + thick):
 		return 255
@@ -351,7 +395,7 @@ def _plane_color_v2(x, y):
 	|
 	'''
 	thick = 0.2
-	width = 2
+	width = 4
 	angle = 75/180*np.pi#angle != 0.
 
 	cut = abs(x - y/np.tan(angle))
@@ -360,6 +404,66 @@ def _plane_color_v2(x, y):
 		return 255
 	else:
 		return 0
+
+def _plane_color_v3(x, y, theta = None):
+
+	#car_l = 0.1
+	car_w = 2	
+	#红色线表示车子的方向.
+	car_center = [0,0,255]
+	#在俯视图中则使用XX色来表示车身.
+	car_color = [255, 255, 0]
+
+	road_width = 3
+	road_thick = 0.2
+	#马路仍使用白色表示
+	road_color = [255, 255, 255]
+
+	#tan1 = car_w/car_l
+	#tan2 = (car_w**2+car_l**2-road_width**2)/road_width/np.sqrt(car_w**2+car_l**2)
+
+	#max_k = (tan1+tan2)/(1+tan1*tan2)
+	#min_kk = 1/max_k
+
+	result = [0, 0, 0]
+	theta = theta/180*np.pi
+
+	#if np.tan(theta) < max_k:
+	#	raise ValueError("theta too small!")
+	if theta <= 0 and theta >= 90:
+		raise ValueError("Should between 0-90 degree.")
+	#限制角度有一个好处，就是在xOy坐标中，直线总是从左下到右上的
+	#方向固定了之后就可以很简单的判断
+	#不过似乎加上斜率也可以用一个式子解决，节省判断的开销
+
+	k = np.tan(theta)
+	b = 3 + k
+	#b怎么算的？是已知k，然后点(-1,3)，也就是车的左上角在线上 3=-1*k+b => b=3+k
+	#k*(kx+b-y)可以判断点在左右，因为(kx+b-y)是判断在上下的，加上斜率就可以判断左右
+	#flag = (k > 0)*(k*x+b-y)
+	#按照车道线的概念，现在是在考虑左侧的线，那么flag就是这条线右侧，左侧那条边线的方程位
+	#也可以用相同的方法来构造，但是说实话还是比较麻烦，所以还是用之前那个观察在x轴上的截距来判断
+	left_flag_right = -b/k
+	left_flag_left = -b/k - road_thick/np.sin(theta)
+	x_cut = x - y/k
+	if x_cut < left_flag_right and x_cut > left_flag_left:
+		result = road_color
+	
+	mid_flag_left = -b/k  + road_width/np.sin(theta)/2
+	mid_flag_right = mid_flag_left + road_thick/np.sin(theta)
+	if x_cut < mid_flag_right and x_cut > mid_flag_left:
+		result = road_color
+
+	right_flag_left = -b/k + road_width/np.sin(theta)
+	right_flag_right = right_flag_left + road_thick/np.sin(theta)
+	if x_cut < right_flag_right and x_cut > right_flag_left:
+		result = road_color
+
+	#if abs(x) < car_w/2 and (y > 0 and y < 3):
+	#	result = car_color
+	if abs(x) < 0.05:
+		result = car_center
+	return result
 
 def getbirdeye_v3(src, image_h = 640, image_w = 960):
 	'''
@@ -433,6 +537,87 @@ def getbirdeye_v3(src, image_h = 640, image_w = 960):
 
 	return result, (step_x, step_y)
 
+def getbirdeye_v3_1(src, yaw, h, image_h = 640, image_w = 960):
+	'''
+	特别的来处理陈俊他的手机拍摄的照片.
+	需要做一些视角转换的工作，因为拍摄的照片都是自下而上，平行直线收敛
+	符合人的认知习惯。之前推导模型的时候由于光心位于物体和成像中间，所以
+	会出现倒转的现象，现在要把 world2pixel_v3_1 和 pixel2world_v3_1
+	都适当修改，需要可以适应不同尺寸的照片，无需再手动去改参数
+	'''
+
+	im = cv2.imread(src, 0)
+
+	#查看尺寸
+	height, width = im.shape[:2]
+	print(height, width)
+
+	#相机标定的结果
+	matlab_result = np.array([ 	[3.8465, 0, 0],
+						[0, 3.8495, 0],
+						[1.6925, 1.7475, 0.001]		])*1000
+	
+	#principleX principleY光心位置
+	#光心的位置是根据标定的结果，按比例换算的，原始的相机像素似乎就是 3456x3456，按比例换算过来之后
+	#没问题
+	M = 3456
+	N = 3456
+	pX = matlab_result[2,0]*width/M
+	pY = matlab_result[2,1]*height/N
+	print("Principle: ", pX, pY)
+
+	uvlimits = np.ones((4,3))
+	uvlimits[:, :2] = np.array([[1,1], [width - 2, height - 2], [width - 2, 1], [1, height - 2]])
+
+	u_uu = np.array(
+		[	[0, 1, 0],
+			[-1, 0, 0],
+			[pY, -pX, 1]	])
+	uvlimits = np.matmul(uvlimits, u_uu)
+
+	xylimits = np.array([pixel2world_v3_1(i[0], i[1], yaw, h, height, width) for i in uvlimits])
+	xMax = max(xylimits[:, 0])
+	xMin = min(xylimits[:, 0])
+	yMax = max(xylimits[:, 1])
+	yMin = min(xylimits[:, 1])
+	
+	print(xMax, xMin)
+	print(yMax, yMin)
+
+	#根据计算出来的空间范围来实际的计算每个像素在不同方向上所代表的实际距离
+	step_y = (yMax - yMin)/image_h
+	step_x = (xMax - xMin)/image_w
+	print("step x: %.5f, step y: %.5f"%(step_x, step_y))
+	result = np.zeros((image_h, image_w), dtype = "uint8")
+
+	y = yMin
+	for i in range(image_h):
+		x = xMin
+		for j in range(image_w):
+			u, v = world2pixel_v3_1(x, y, yaw, h, height, width)
+			uu, vv = v + pX, pY - u
+			if (uu < 1 or uu >= width-1) or (vv < 1 or vv >= height - 1):
+				result[i, j] = 0
+				x += step_x
+				continue
+			u1, u2 = int(uu), int(uu + 1)
+			v1, v2 = int(vv), int(vv + 1)
+			delta_u = uu - u1
+			delta_v = vv - v1
+			
+			val = im[v1, u1]*(1-delta_u)*(1-delta_v)+im[v1, u2]*delta_u*(1-delta_v)+im[v2, u2]*delta_u*delta_v+im[v2, u1]*(1-delta_u)*delta_v
+			if val > 255:
+				val = 255
+			result[-i, j] = val
+			x += step_x
+		y += step_y
+	print(x, y)
+
+	cv2.imshow("BIRD%d"%yaw, result)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
+	#cv2.imwrite("B%d_%.2f.jpg"%(yaw,h), result)
+
 def analyse_birdeye(result, step_x, step_y):
 	#需要知道图像中像素，在横纵方向上各代表多少距离
 	#从图像中我们也可以获知，第二由白转黑和第二个由黑转白的点就是车道内侧的位置，
@@ -483,7 +668,7 @@ def analyse_birdeye_v2(result, step_x, step_y):
 
 	record = []
 
-	for i in range(100, image_h - 1):
+	for i in range(200, image_h - 1):
 		#white2black = 0
 		#black2white = 0
 		exchange = 0
@@ -503,25 +688,27 @@ def analyse_birdeye_v2(result, step_x, step_y):
 
 	row = range(len(record))
 	plt.plot(row, record, label = "Predict")
-	plt.plot(row, [2/np.sin(75/180*np.pi) for i in row], label = "Reality")
+	plt.plot(row, [3 for i in row], label = "Reality")
 	plt.legend()
 	plt.show()
 
 if __name__ == "__main__":
 
 	test_img = "D:\\0824\\Project1\\Project1\\test_videos\\pic_001.jpg"
-	test1 = "D:\\GitFile\\roadlane\\1.jpg"
+	test1 = "D:\\GitFile\\roadlane\\Images\\test02.jpg"
 	test2 = "D:\\0824\\Project1\\Project1\\test_videos\\2.jpg"
-	test3 = "D:\\inverse_inspective\\3.jpg"
+	test3 = "D:\\GitFile\\roadlane\\Images\\test01.jpg"
 	#pic = cv2.imread(test_img)
 
 	#pixel2world(pic)
 	#x, y = world2pixel(2.3, 7.8 ,0, False)
 	#print(x, y)
 	#print(pixel2world_v2(x, y))
-	plane2img_v2(test1)
+	#plane2img_v2(test1)
+	#plane2img_v2(test3)
 	#getbirdeye(test3, interpolation = "NEAREST")
-	#getbirdeye(test2, interpolation = "NEAREST")
+	getbirdeye_v3_1(test1, 45, 0.328)
+	#getbirdeye_v3_1(test3, 61, 1.28)
 	#u, v = world2pixel_v3(-0.2, 2)
 	#print(u, v)
 	#x, y = pixel2world_v3(u, v)
